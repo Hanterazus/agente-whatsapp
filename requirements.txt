@@ -1,0 +1,7 @@
+flask
+twilio
+langchain-groq
+langgraph
+langchain
+langchain-community
+tavily-python
