@@ -15,7 +15,7 @@ from langchain_core.tools import tool
 
 # ── Configurações ──────────────────────────────────────────
 llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0)
-llm_vision = ChatGroq(model="llama-3.2-90b-vision-preview", temperature=0)
+llm_vision = ChatGroq(model="meta-llama/llama-4-scout-17b-16e-instruct", temperature=0)
 twilio_client = Client(os.environ["TWILIO_ACCOUNT_SID"], os.environ["TWILIO_AUTH_TOKEN"])
 
 # ── Tools ──────────────────────────────────────────────────
