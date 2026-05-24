@@ -5,3 +5,4 @@ langgraph
 langchain
 langchain-community
 tavily-python
+pymupdf
