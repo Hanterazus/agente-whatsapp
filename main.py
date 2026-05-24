@@ -3,6 +3,7 @@ import requests
 import base64
 import fitz
 import tempfile
+import threading
 from flask import Flask, request
 from twilio.twiml.messaging_response import MessagingResponse
 from twilio.rest import Client
@@ -29,7 +30,7 @@ def gerar_imagem(descricao: str) -> str:
 def analisar_link(url: str) -> str:
     """Analisa o conteúdo de um link/site e retorna o texto."""
     try:
-        resposta = requests.get(f"https://r.jina.ai/{url}", timeout=15)
+        resposta = requests.get(f"https://r.jina.ai/{url}", timeout=10)
         return resposta.text[:3000]
     except:
         return "Não consegui acessar esse link."
@@ -38,7 +39,7 @@ def analisar_link(url: str) -> str:
 def analisar_pdf_url(url: str) -> str:
     """Analisa um documento PDF a partir de uma URL pública."""
     try:
-        resposta = requests.get(f"https://r.jina.ai/{url}", timeout=20)
+        resposta = requests.get(f"https://r.jina.ai/{url}", timeout=10)
         return resposta.text[:3000]
     except:
         return "Não consegui acessar esse documento."
@@ -128,6 +129,13 @@ def analisar_pdf_whatsapp(media_url: str) -> str:
     except Exception as e:
         return f"Não consegui ler o PDF: {str(e)}"
 
+def invocar_agente(messages, config, resultado):
+    """Invoca o agente com tratamento de erro."""
+    try:
+        resultado["resposta"] = agent.invoke(messages, config)
+    except Exception as e:
+        resultado["erro"] = str(e)
+
 @app.route("/whatsapp", methods=["POST"])
 def whatsapp():
     numero = request.form.get("From")
@@ -146,14 +154,24 @@ def whatsapp():
             conteudo_extra = analisar_imagem_whatsapp(media_url)
             mensagem = f"{mensagem}\n[Imagem enviada pelo usuário: {conteudo_extra}]" if mensagem else f"[Imagem enviada pelo usuário: {conteudo_extra}]"
 
-    result = agent.invoke({
-        "messages": [
-            ("system", SYSTEM_PROMPT),
-            ("user", mensagem)
-        ]
-    }, config)
+    resultado = {}
+    thread = threading.Thread(
+        target=invocar_agente,
+        args=(
+            {"messages": [("system", SYSTEM_PROMPT), ("user", mensagem)]},
+            config,
+            resultado
+        )
+    )
+    thread.start()
+    thread.join(timeout=12)
 
-    resposta = result["messages"][-1].content
+    if "resposta" in resultado:
+        resposta = resultado["resposta"]["messages"][-1].content
+    elif "erro" in resultado:
+        resposta = "Desculpe, ocorreu um erro ao processar sua mensagem. Pode tentar novamente?"
+    else:
+        resposta = "Desculpe, demorei demais para processar. Pode repetir?"
 
     resp = MessagingResponse()
 
