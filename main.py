@@ -1,6 +1,8 @@
 import os
 import requests
 import base64
+import fitz
+import tempfile
 from flask import Flask, request
 from twilio.twiml.messaging_response import MessagingResponse
 from twilio.rest import Client
@@ -33,28 +35,14 @@ def analisar_link(url: str) -> str:
         return "Não consegui acessar esse link."
 
 @tool
-def analisar_pdf_whatsapp(media_url: str) -> str:
-    """Lê PDF enviado no WhatsApp via Twilio."""
+def analisar_pdf_url(url: str) -> str:
+    """Analisa um documento PDF a partir de uma URL pública."""
     try:
-        import fitz  # pymupdf
-        import tempfile
+        resposta = requests.get(f"https://r.jina.ai/{url}", timeout=20)
+        return resposta.text[:3000]
+    except:
+        return "Não consegui acessar esse documento."
 
-        conteudo, _ = baixar_midia_twilio(media_url)
-        
-        # Salva temporariamente e extrai texto
-        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
-            tmp.write(conteudo)
-            tmp_path = tmp.name
-
-        doc = fitz.open(tmp_path)
-        texto = ""
-        for pagina in doc:
-            texto += pagina.get_text()
-        doc.close()
-
-        return texto[:3000] if texto.strip() else "PDF sem texto extraível (pode ser imagem escaneada)."
-    except Exception as e:
-        return f"Não consegui ler o PDF: {str(e)}"
 tools = [
     TavilySearchResults(max_results=3),
     gerar_imagem,
@@ -89,7 +77,7 @@ Quando gerar uma imagem, responda APENAS com a URL no formato: IMAGEM_GERADA:URL
 # ── Flask ──────────────────────────────────────────────────
 app = Flask(__name__)
 
-def baixar_midia_twilio(media_url: str) -> bytes:
+def baixar_midia_twilio(media_url: str):
     """Baixa qualquer mídia do Twilio com autenticação."""
     resposta = requests.get(
         media_url,
@@ -118,16 +106,18 @@ def analisar_pdf_whatsapp(media_url: str) -> str:
     """Lê PDF enviado no WhatsApp via Twilio."""
     try:
         conteudo, _ = baixar_midia_twilio(media_url)
-        # Converte pra base64 e manda pro modelo de visão como documento
-        pdf_base64 = base64.b64encode(conteudo).decode("utf-8")
-        mensagem = llm_vision.invoke([{
-            "role": "user",
-            "content": [
-                {"type": "text", "text": "Leia e resuma o conteúdo deste PDF em português brasileiro."},
-                {"type": "image_url", "image_url": {"url": f"data:application/pdf;base64,{pdf_base64}"}}
-            ]
-        }])
-        return mensagem.content
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+            tmp.write(conteudo)
+            tmp_path = tmp.name
+
+        doc = fitz.open(tmp_path)
+        texto = ""
+        for pagina in doc:
+            texto += pagina.get_text()
+        doc.close()
+
+        return texto[:3000] if texto.strip() else "PDF sem texto extraível (pode ser imagem escaneada)."
     except Exception as e:
         return f"Não consegui ler o PDF: {str(e)}"
 
