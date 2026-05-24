@@ -78,13 +78,20 @@ Quando gerar uma imagem, responda APENAS com a URL no formato: IMAGEM_GERADA:URL
 app = Flask(__name__)
 
 def baixar_midia_twilio(media_url: str):
-    """Baixa qualquer mídia do Twilio com autenticação."""
+    """Baixa qualquer mídia do Twilio com autenticação e limite de 10MB."""
     resposta = requests.get(
         media_url,
         auth=(os.environ["TWILIO_ACCOUNT_SID"], os.environ["TWILIO_AUTH_TOKEN"]),
-        timeout=20
+        timeout=30,
+        stream=True
     )
-    return resposta.content, resposta.headers.get("Content-Type", "application/octet-stream")
+    MAX_BYTES = 10 * 1024 * 1024
+    conteudo = b""
+    for chunk in resposta.iter_content(chunk_size=8192):
+        conteudo += chunk
+        if len(conteudo) > MAX_BYTES:
+            break
+    return conteudo, resposta.headers.get("Content-Type", "application/octet-stream")
 
 def analisar_imagem_whatsapp(media_url: str) -> str:
     """Analisa imagem enviada no WhatsApp."""
