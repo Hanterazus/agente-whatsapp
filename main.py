@@ -95,14 +95,16 @@ def baixar_midia_twilio(media_url: str):
     return conteudo, resposta.headers.get("Content-Type", "application/octet-stream")
 
 def analisar_imagem_whatsapp(media_url: str) -> str:
-    """Analisa imagem enviada no WhatsApp."""
+    """Analisa imagem enviada no WhatsApp via URL autenticada."""
     try:
-        conteudo, content_type = baixar_midia_twilio(media_url)
-        imagem_base64 = base64.b64encode(conteudo).decode("utf-8")
+        sid = os.environ["TWILIO_ACCOUNT_SID"]
+        token = os.environ["TWILIO_AUTH_TOKEN"]
+        url_autenticada = media_url.replace("https://", f"https://{sid}:{token}@")
+
         mensagem = llm_vision.invoke([{
             "role": "user",
             "content": [
-                {"type": "image_url", "image_url": {"url": f"data:{content_type};base64,{imagem_base64}"}},
+                {"type": "image_url", "image_url": {"url": url_autenticada}},
                 {"type": "text", "text": "Descreva detalhadamente o que você vê nessa imagem. Se houver texto, transcreva-o. Responda em português brasileiro."}
             ]
         }])
