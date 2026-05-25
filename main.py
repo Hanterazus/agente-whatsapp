@@ -23,8 +23,15 @@ twilio_client = Client(os.environ["TWILIO_ACCOUNT_SID"], os.environ["TWILIO_AUTH
 @tool
 def gerar_imagem(descricao: str) -> str:
     """Gera uma imagem a partir de uma descrição e retorna a URL."""
-    url = f"https://image.pollinations.ai/prompt/{requests.utils.quote(descricao)}"
-    return f"IMAGEM_GERADA:{url}"
+    try:
+        url = f"https://image.pollinations.ai/prompt/{requests.utils.quote(descricao)}?width=1080&height=1920&nologo=true"
+        # Faz requisição pra garantir que a imagem foi gerada
+        resposta = requests.get(url, timeout=55)
+        if resposta.status_code == 200:
+            return f"IMAGEM_GERADA:{url}"
+        return "Não consegui gerar a imagem."
+    except Exception as e:
+        return f"Erro ao gerar imagem: {str(e)}"
 
 @tool
 def analisar_link(url: str) -> str:
@@ -73,7 +80,8 @@ Você pode:
 - Analisar documentos PDF usando a tool analisar_pdf_url
 - Pesquisar na internet usando a tool de busca
 
-Quando gerar uma imagem, responda APENAS com a URL no formato: IMAGEM_GERADA:URL"""
+Quando gerar uma imagem, responda APENAS com a URL no formato: IMAGEM_GERADA:URL
+Nunca diga que vai gerar uma imagem sem realmente gerar. Sempre use a tool gerar_imagem."""
 
 # ── Flask ──────────────────────────────────────────────────
 app = Flask(__name__)
@@ -166,7 +174,7 @@ def whatsapp():
         )
     )
     thread.start()
-    thread.join(timeout=12)
+    thread.join(timeout=90)  # 90 segundos pra dar tempo de gerar imagem
 
     if "resposta" in resultado:
         resposta = resultado["resposta"]["messages"][-1].content
