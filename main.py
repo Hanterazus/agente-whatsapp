@@ -25,7 +25,6 @@ def gerar_imagem(descricao: str) -> str:
     """Gera uma imagem a partir de uma descrição e retorna a URL."""
     try:
         url = f"https://image.pollinations.ai/prompt/{requests.utils.quote(descricao)}?width=1080&height=1920&nologo=true"
-        # Faz requisição pra garantir que a imagem foi gerada
         resposta = requests.get(url, timeout=55)
         if resposta.status_code == 200:
             return f"IMAGEM_GERADA:{url}"
@@ -51,11 +50,133 @@ def analisar_pdf_url(url: str) -> str:
     except:
         return "Não consegui acessar esse documento."
 
+@tool
+def previsao_tempo(cidade: str) -> str:
+    """Retorna a previsão do tempo para uma cidade."""
+    try:
+        geo = requests.get(
+            f"https://geocoding-api.open-meteo.com/v1/search?name={requests.utils.quote(cidade)}&count=1",
+            timeout=10
+        ).json()
+        if not geo.get("results"):
+            return f"Cidade '{cidade}' não encontrada."
+        lat = geo["results"][0]["latitude"]
+        lon = geo["results"][0]["longitude"]
+        clima = requests.get(
+            f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,weathercode,windspeed_10m&timezone=auto",
+            timeout=10
+        ).json()
+        temp = clima["current"]["temperature_2m"]
+        vento = clima["current"]["windspeed_10m"]
+        return f"Tempo em {cidade}: {temp}°C, vento {vento} km/h."
+    except Exception as e:
+        return f"Não consegui obter o tempo: {str(e)}"
+
+@tool
+def cotacao_moeda(moeda: str) -> str:
+    """Retorna a cotação de uma moeda em relação ao Real (BRL)."""
+    try:
+        resposta = requests.get(
+            f"https://api.exchangerate-api.com/v4/latest/BRL",
+            timeout=10
+        ).json()
+        moeda = moeda.upper()
+        if moeda in resposta["rates"]:
+            valor = 1 / resposta["rates"][moeda]
+            return f"1 {moeda} = R$ {valor:.2f}"
+        return f"Moeda '{moeda}' não encontrada."
+    except Exception as e:
+        return f"Não consegui obter a cotação: {str(e)}"
+
+@tool
+def gerar_qrcode(texto: str) -> str:
+    """Gera um QR code a partir de um texto ou URL."""
+    url = f"https://api.qrserver.com/v1/create-qr-code/?size=300x300&data={requests.utils.quote(texto)}"
+    return f"IMAGEM_GERADA:{url}"
+
+@tool
+def buscar_noticias(tema: str) -> str:
+    """Busca notícias recentes sobre um tema."""
+    try:
+        chave = os.environ["NEWS_API_KEY"]
+        resposta = requests.get(
+            f"https://newsapi.org/v2/everything?q={requests.utils.quote(tema)}&language=pt&pageSize=3&apiKey={chave}",
+            timeout=10
+        ).json()
+        if resposta.get("articles"):
+            noticias = []
+            for a in resposta["articles"][:3]:
+                noticias.append(f"• {a['title']} — {a['source']['name']}")
+            return "\n".join(noticias)
+        return "Nenhuma notícia encontrada."
+    except Exception as e:
+        return f"Erro ao buscar notícias: {str(e)}"
+
+@tool
+def calcular_wolfram(pergunta: str) -> str:
+    """Resolve cálculos, conversões e perguntas científicas complexas."""
+    try:
+        chave = os.environ["WOLFRAM_API_KEY"]
+        resposta = requests.get(
+            f"https://www.wolframalpha.com/api/v1/llm-api?input={requests.utils.quote(pergunta)}&appid={chave}",
+            timeout=15
+        )
+        return resposta.text[:2000] if resposta.status_code == 200 else "Não consegui calcular."
+    except Exception as e:
+        return f"Erro no cálculo: {str(e)}"
+
+@tool
+def traduzir_texto(texto: str, idioma_destino: str) -> str:
+    """Traduz um texto para o idioma desejado."""
+    try:
+        payload = {
+            "q": texto,
+            "source": "auto",
+            "target": idioma_destino,
+            "format": "text"
+        }
+        resposta = requests.post(
+            "https://libretranslate.com/translate",
+            json=payload,
+            timeout=10
+        ).json()
+        return resposta.get("translatedText", "Não consegui traduzir.")
+    except Exception as e:
+        return f"Erro na tradução: {str(e)}"
+
+@tool
+def texto_para_voz(texto: str) -> str:
+    """Converte texto em áudio usando ElevenLabs."""
+    try:
+        chave = os.environ["ELEVENLABS_API_KEY"]
+        voice_id = "pNInz6obpgDQGcFmaJgB"  # Voz padrão Adam
+        resposta = requests.post(
+            f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
+            headers={"xi-api-key": chave, "Content-Type": "application/json"},
+            json={"text": texto, "model_id": "eleven_multilingual_v2"},
+            timeout=30
+        )
+        if resposta.status_code == 200:
+            # Salva o áudio temporariamente
+            with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
+                tmp.write(resposta.content)
+                return f"AUDIO_GERADO:{tmp.name}"
+        return "Não consegui gerar o áudio."
+    except Exception as e:
+        return f"Erro ao gerar voz: {str(e)}"
+
 tools = [
     TavilySearchResults(max_results=3),
     gerar_imagem,
     analisar_link,
     analisar_pdf_url,
+    previsao_tempo,
+    cotacao_moeda,
+    gerar_qrcode,
+    buscar_noticias,
+    calcular_wolfram,
+    traduzir_texto,
+    texto_para_voz,
 ]
 
 memory = MemorySaver()
@@ -79,9 +200,17 @@ Você pode:
 - Analisar links e sites usando a tool analisar_link
 - Analisar documentos PDF usando a tool analisar_pdf_url
 - Pesquisar na internet usando a tool de busca
+- Verificar previsão do tempo usando a tool previsao_tempo
+- Verificar cotação de moedas usando a tool cotacao_moeda
+- Gerar QR codes usando a tool gerar_qrcode
+- Buscar notícias usando a tool buscar_noticias
+- Fazer cálculos complexos usando a tool calcular_wolfram
+- Traduzir textos usando a tool traduzir_texto
+- Converter texto em voz usando a tool texto_para_voz
 
-Quando gerar uma imagem, responda APENAS com a URL no formato: IMAGEM_GERADA:URL
-Nunca diga que vai gerar uma imagem sem realmente gerar. Sempre use a tool gerar_imagem."""
+Quando gerar uma imagem ou QR code, responda APENAS com a URL no formato: IMAGEM_GERADA:URL
+Quando gerar áudio, responda APENAS com o caminho no formato: AUDIO_GERADO:caminho
+Nunca diga que vai gerar uma imagem sem realmente gerar. Sempre use a tool correta."""
 
 # ── Flask ──────────────────────────────────────────────────
 app = Flask(__name__)
@@ -108,7 +237,6 @@ def analisar_imagem_whatsapp(media_url: str) -> str:
         sid = os.environ["TWILIO_ACCOUNT_SID"]
         token = os.environ["TWILIO_AUTH_TOKEN"]
         url_autenticada = media_url.replace("https://", f"https://{sid}:{token}@")
-
         mensagem = llm_vision.invoke([{
             "role": "user",
             "content": [
@@ -124,20 +252,36 @@ def analisar_pdf_whatsapp(media_url: str) -> str:
     """Lê PDF enviado no WhatsApp via Twilio."""
     try:
         conteudo, _ = baixar_midia_twilio(media_url)
-
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
             tmp.write(conteudo)
             tmp_path = tmp.name
-
         doc = fitz.open(tmp_path)
         texto = ""
         for pagina in doc:
             texto += pagina.get_text()
         doc.close()
-
         return texto[:3000] if texto.strip() else "PDF sem texto extraível (pode ser imagem escaneada)."
     except Exception as e:
         return f"Não consegui ler o PDF: {str(e)}"
+
+def transcrever_audio_whatsapp(media_url: str) -> str:
+    """Transcreve áudio enviado no WhatsApp usando Groq Whisper."""
+    try:
+        conteudo, content_type = baixar_midia_twilio(media_url)
+        with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as tmp:
+            tmp.write(conteudo)
+            tmp_path = tmp.name
+        with open(tmp_path, "rb") as f:
+            resposta = requests.post(
+                "https://api.groq.com/openai/v1/audio/transcriptions",
+                headers={"Authorization": f"Bearer {os.environ['GROQ_API_KEY']}"},
+                files={"file": ("audio.ogg", f, "audio/ogg")},
+                data={"model": "whisper-large-v3", "language": "pt"},
+                timeout=30
+            )
+        return resposta.json().get("text", "Não consegui transcrever o áudio.")
+    except Exception as e:
+        return f"Não consegui transcrever o áudio: {str(e)}"
 
 def invocar_agente(messages, config, resultado):
     """Invoca o agente com tratamento de erro."""
@@ -163,6 +307,9 @@ def whatsapp():
         elif "image" in media_type:
             conteudo_extra = analisar_imagem_whatsapp(media_url)
             mensagem = f"{mensagem}\n[Imagem enviada pelo usuário: {conteudo_extra}]" if mensagem else f"[Imagem enviada pelo usuário: {conteudo_extra}]"
+        elif "audio" in media_type or "ogg" in media_type:
+            conteudo_extra = transcrever_audio_whatsapp(media_url)
+            mensagem = f"{mensagem}\n[Áudio enviado pelo usuário: {conteudo_extra}]" if mensagem else f"[Áudio enviado pelo usuário: {conteudo_extra}]"
 
     resultado = {}
     thread = threading.Thread(
@@ -174,7 +321,7 @@ def whatsapp():
         )
     )
     thread.start()
-    thread.join(timeout=90)  # 90 segundos pra dar tempo de gerar imagem
+    thread.join(timeout=90)
 
     if "resposta" in resultado:
         resposta = resultado["resposta"]["messages"][-1].content
@@ -185,7 +332,14 @@ def whatsapp():
 
     resp = MessagingResponse()
 
-    if "IMAGEM_GERADA:" in resposta:
+    if "AUDIO_GERADO:" in resposta:
+        caminho_audio = resposta.split("AUDIO_GERADO:")[-1].strip()
+        # Sobe o áudio pro Twilio
+        with open(caminho_audio, "rb") as f:
+            audio_b64 = base64.b64encode(f.read()).decode("utf-8")
+        msg = resp.message()
+        msg.media(f"data:audio/mpeg;base64,{audio_b64}")
+    elif "IMAGEM_GERADA:" in resposta:
         url_imagem = resposta.split("IMAGEM_GERADA:")[-1].strip()
         msg = resp.message()
         msg.media(url_imagem)
