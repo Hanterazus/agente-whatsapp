@@ -51,6 +51,18 @@ def analisar_pdf_url(url: str) -> str:
         return "Não consegui acessar esse documento."
 
 @tool
+def traduzir_texto(texto: str, idioma_destino: str) -> str:
+    """Traduz qualquer texto para o idioma desejado usando IA."""
+    try:
+        mensagem = llm.invoke([{
+            "role": "user",
+            "content": f"Traduza o seguinte texto para {idioma_destino}. Retorne APENAS o texto traduzido, sem explicações:\n\n{texto}"
+        }])
+        return mensagem.content
+    except Exception as e:
+        return f"Erro na tradução: {str(e)}"
+
+@tool
 def previsao_tempo(cidade: str) -> str:
     """Retorna a previsão do tempo para uma cidade."""
     try:
@@ -126,30 +138,11 @@ def calcular_wolfram(pergunta: str) -> str:
         return f"Erro no cálculo: {str(e)}"
 
 @tool
-def traduzir_texto(texto: str, idioma_destino: str) -> str:
-    """Traduz um texto para o idioma desejado."""
-    try:
-        payload = {
-            "q": texto,
-            "source": "auto",
-            "target": idioma_destino,
-            "format": "text"
-        }
-        resposta = requests.post(
-            "https://libretranslate.com/translate",
-            json=payload,
-            timeout=10
-        ).json()
-        return resposta.get("translatedText", "Não consegui traduzir.")
-    except Exception as e:
-        return f"Erro na tradução: {str(e)}"
-
-@tool
 def texto_para_voz(texto: str) -> str:
     """Converte texto em áudio usando ElevenLabs."""
     try:
         chave = os.environ["ELEVENLABS_API_KEY"]
-        voice_id = "pNInz6obpgDQGcFmaJgB"  # Voz padrão Adam
+        voice_id = "pNInz6obpgDQGcFmaJgB"
         resposta = requests.post(
             f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
             headers={"xi-api-key": chave, "Content-Type": "application/json"},
@@ -157,7 +150,6 @@ def texto_para_voz(texto: str) -> str:
             timeout=30
         )
         if resposta.status_code == 200:
-            # Salva o áudio temporariamente
             with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
                 tmp.write(resposta.content)
                 return f"AUDIO_GERADO:{tmp.name}"
@@ -170,12 +162,12 @@ tools = [
     gerar_imagem,
     analisar_link,
     analisar_pdf_url,
+    traduzir_texto,
     previsao_tempo,
     cotacao_moeda,
     gerar_qrcode,
     buscar_noticias,
     calcular_wolfram,
-    traduzir_texto,
     texto_para_voz,
 ]
 
@@ -199,14 +191,18 @@ Você pode:
 - Gerar imagens usando a tool gerar_imagem
 - Analisar links e sites usando a tool analisar_link
 - Analisar documentos PDF usando a tool analisar_pdf_url
-- Pesquisar na internet usando a tool de busca
+- Traduzir qualquer texto ou texto extraído de imagens usando a tool traduzir_texto
 - Verificar previsão do tempo usando a tool previsao_tempo
 - Verificar cotação de moedas usando a tool cotacao_moeda
 - Gerar QR codes usando a tool gerar_qrcode
 - Buscar notícias usando a tool buscar_noticias
 - Fazer cálculos complexos usando a tool calcular_wolfram
-- Traduzir textos usando a tool traduzir_texto
 - Converter texto em voz usando a tool texto_para_voz
+
+Quando o usuário enviar uma imagem com texto e pedir tradução:
+1. Use as informações da imagem já descritas no contexto
+2. Identifique o texto da imagem
+3. Use a tool traduzir_texto para traduzir
 
 Quando gerar uma imagem ou QR code, responda APENAS com a URL no formato: IMAGEM_GERADA:URL
 Quando gerar áudio, responda APENAS com o caminho no formato: AUDIO_GERADO:caminho
@@ -241,7 +237,7 @@ def analisar_imagem_whatsapp(media_url: str) -> str:
             "role": "user",
             "content": [
                 {"type": "image_url", "image_url": {"url": url_autenticada}},
-                {"type": "text", "text": "Descreva detalhadamente o que você vê nessa imagem. Se houver texto, transcreva-o. Responda em português brasileiro."}
+                {"type": "text", "text": "Descreva detalhadamente o que você vê nessa imagem. Se houver texto em qualquer idioma, transcreva-o exatamente como está. Responda em português brasileiro."}
             ]
         }])
         return mensagem.content
@@ -334,7 +330,6 @@ def whatsapp():
 
     if "AUDIO_GERADO:" in resposta:
         caminho_audio = resposta.split("AUDIO_GERADO:")[-1].strip()
-        # Sobe o áudio pro Twilio
         with open(caminho_audio, "rb") as f:
             audio_b64 = base64.b64encode(f.read()).decode("utf-8")
         msg = resp.message()
