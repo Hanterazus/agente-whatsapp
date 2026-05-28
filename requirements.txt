@@ -6,3 +6,4 @@ langchain
 langchain-community
 tavily-python
 pymupdf
+google-generativeai
