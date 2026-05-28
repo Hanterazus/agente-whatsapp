@@ -4,6 +4,7 @@ import base64
 import fitz
 import tempfile
 import threading
+import google.generativeai as genai
 from flask import Flask, request
 from twilio.twiml.messaging_response import MessagingResponse
 from twilio.rest import Client
@@ -17,20 +18,42 @@ from langchain_core.tools import tool
 llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0)
 llm_vision = ChatGroq(model="meta-llama/llama-4-scout-17b-16e-instruct", temperature=0)
 twilio_client = Client(os.environ["TWILIO_ACCOUNT_SID"], os.environ["TWILIO_AUTH_TOKEN"])
+genai.configure(api_key=os.environ["GOOGLE_API_KEY"])
 
 # ── Tools ──────────────────────────────────────────────────
 
 @tool
 def gerar_imagem(descricao: str) -> str:
-    """Gera uma imagem a partir de uma descrição e retorna a URL."""
+    """Gera uma imagem de alta qualidade usando Google Imagen."""
     try:
-        url = f"https://image.pollinations.ai/prompt/{requests.utils.quote(descricao)}?width=1080&height=1920&nologo=true"
-        resposta = requests.get(url, timeout=55)
-        if resposta.status_code == 200:
-            return f"IMAGEM_GERADA:{url}"
-        return "Não consegui gerar a imagem."
+        imagen = genai.ImageGenerationModel("imagen-3.0-generate-002")
+        resultado = imagen.generate_images(
+            prompt=descricao,
+            number_of_images=1,
+            aspect_ratio="9:16",
+        )
+        imagem = resultado.images[0]
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+            tmp.write(imagem._image_bytes)
+            tmp_path = tmp.name
+        return f"IMAGEM_LOCAL:{tmp_path}"
     except Exception as e:
-        return f"Erro ao gerar imagem: {str(e)}"
+        # Fallback pra Pollinations se der erro
+        url = f"https://image.pollinations.ai/prompt/{requests.utils.quote(descricao)}?width=1080&height=1920&nologo=true"
+        requests.get(url, timeout=55)
+        return f"IMAGEM_GERADA:{url}"
+
+@tool
+def traduzir_texto(texto: str, idioma_destino: str) -> str:
+    """Traduz qualquer texto para o idioma desejado usando IA."""
+    try:
+        mensagem = llm.invoke([{
+            "role": "user",
+            "content": f"Traduza o seguinte texto para {idioma_destino}. Retorne APENAS o texto traduzido, sem explicações:\n\n{texto}"
+        }])
+        return mensagem.content
+    except Exception as e:
+        return f"Erro na tradução: {str(e)}"
 
 @tool
 def analisar_link(url: str) -> str:
@@ -49,18 +72,6 @@ def analisar_pdf_url(url: str) -> str:
         return resposta.text[:3000]
     except:
         return "Não consegui acessar esse documento."
-
-@tool
-def traduzir_texto(texto: str, idioma_destino: str) -> str:
-    """Traduz qualquer texto para o idioma desejado usando IA."""
-    try:
-        mensagem = llm.invoke([{
-            "role": "user",
-            "content": f"Traduza o seguinte texto para {idioma_destino}. Retorne APENAS o texto traduzido, sem explicações:\n\n{texto}"
-        }])
-        return mensagem.content
-    except Exception as e:
-        return f"Erro na tradução: {str(e)}"
 
 @tool
 def previsao_tempo(cidade: str) -> str:
@@ -188,7 +199,7 @@ sempre responda todas as perguntas que forem feiras sobre qualquer coisa, qualqu
 Seja cordial, objetivo e útil.
 
 Você pode:
-- Gerar imagens usando a tool gerar_imagem
+- Gerar imagens de alta qualidade usando a tool gerar_imagem (usa Google Imagen)
 - Analisar links e sites usando a tool analisar_link
 - Analisar documentos PDF usando a tool analisar_pdf_url
 - Traduzir qualquer texto ou texto extraído de imagens usando a tool traduzir_texto
@@ -199,20 +210,15 @@ Você pode:
 - Fazer cálculos complexos usando a tool calcular_wolfram
 - Converter texto em voz usando a tool texto_para_voz
 
-Quando o usuário enviar uma imagem com texto e pedir tradução:
-1. Use as informações da imagem já descritas no contexto
-2. Identifique o texto da imagem
-3. Use a tool traduzir_texto para traduzir
-
-Quando gerar uma imagem ou QR code, responda APENAS com a URL no formato: IMAGEM_GERADA:URL
-Quando gerar áudio, responda APENAS com o caminho no formato: AUDIO_GERADO:caminho
+Quando gerar uma imagem ou QR code via URL, responda APENAS: IMAGEM_GERADA:URL
+Quando gerar imagem local, responda APENAS: IMAGEM_LOCAL:caminho
+Quando gerar áudio, responda APENAS: AUDIO_GERADO:caminho
 Nunca diga que vai gerar uma imagem sem realmente gerar. Sempre use a tool correta."""
 
 # ── Flask ──────────────────────────────────────────────────
 app = Flask(__name__)
 
 def baixar_midia_twilio(media_url: str):
-    """Baixa qualquer mídia do Twilio com autenticação e limite de 10MB."""
     resposta = requests.get(
         media_url,
         auth=(os.environ["TWILIO_ACCOUNT_SID"], os.environ["TWILIO_AUTH_TOKEN"]),
@@ -228,7 +234,6 @@ def baixar_midia_twilio(media_url: str):
     return conteudo, resposta.headers.get("Content-Type", "application/octet-stream")
 
 def analisar_imagem_whatsapp(media_url: str) -> str:
-    """Analisa imagem enviada no WhatsApp via URL autenticada."""
     try:
         sid = os.environ["TWILIO_ACCOUNT_SID"]
         token = os.environ["TWILIO_AUTH_TOKEN"]
@@ -245,7 +250,6 @@ def analisar_imagem_whatsapp(media_url: str) -> str:
         return f"Não consegui analisar a imagem: {str(e)}"
 
 def analisar_pdf_whatsapp(media_url: str) -> str:
-    """Lê PDF enviado no WhatsApp via Twilio."""
     try:
         conteudo, _ = baixar_midia_twilio(media_url)
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
@@ -256,14 +260,13 @@ def analisar_pdf_whatsapp(media_url: str) -> str:
         for pagina in doc:
             texto += pagina.get_text()
         doc.close()
-        return texto[:3000] if texto.strip() else "PDF sem texto extraível (pode ser imagem escaneada)."
+        return texto[:3000] if texto.strip() else "PDF sem texto extraível."
     except Exception as e:
         return f"Não consegui ler o PDF: {str(e)}"
 
 def transcrever_audio_whatsapp(media_url: str) -> str:
-    """Transcreve áudio enviado no WhatsApp usando Groq Whisper."""
     try:
-        conteudo, content_type = baixar_midia_twilio(media_url)
+        conteudo, _ = baixar_midia_twilio(media_url)
         with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as tmp:
             tmp.write(conteudo)
             tmp_path = tmp.name
@@ -280,11 +283,16 @@ def transcrever_audio_whatsapp(media_url: str) -> str:
         return f"Não consegui transcrever o áudio: {str(e)}"
 
 def invocar_agente(messages, config, resultado):
-    """Invoca o agente com tratamento de erro."""
     try:
         resultado["resposta"] = agent.invoke(messages, config)
     except Exception as e:
         resultado["erro"] = str(e)
+
+def upload_imagem_twilio(caminho: str) -> str:
+    """Sobe imagem local pro Twilio como base64 URL."""
+    with open(caminho, "rb") as f:
+        dados = base64.b64encode(f.read()).decode("utf-8")
+    return f"data:image/png;base64,{dados}"
 
 @app.route("/whatsapp", methods=["POST"])
 def whatsapp():
@@ -299,13 +307,13 @@ def whatsapp():
 
         if "pdf" in media_type:
             conteudo_extra = analisar_pdf_whatsapp(media_url)
-            mensagem = f"{mensagem}\n[PDF enviado pelo usuário:\n{conteudo_extra}]" if mensagem else f"[PDF enviado pelo usuário:\n{conteudo_extra}]"
+            mensagem = f"{mensagem}\n[PDF enviado:\n{conteudo_extra}]" if mensagem else f"[PDF enviado:\n{conteudo_extra}]"
         elif "image" in media_type:
             conteudo_extra = analisar_imagem_whatsapp(media_url)
-            mensagem = f"{mensagem}\n[Imagem enviada pelo usuário: {conteudo_extra}]" if mensagem else f"[Imagem enviada pelo usuário: {conteudo_extra}]"
+            mensagem = f"{mensagem}\n[Imagem enviada: {conteudo_extra}]" if mensagem else f"[Imagem enviada: {conteudo_extra}]"
         elif "audio" in media_type or "ogg" in media_type:
             conteudo_extra = transcrever_audio_whatsapp(media_url)
-            mensagem = f"{mensagem}\n[Áudio enviado pelo usuário: {conteudo_extra}]" if mensagem else f"[Áudio enviado pelo usuário: {conteudo_extra}]"
+            mensagem = f"{mensagem}\n[Áudio enviado: {conteudo_extra}]" if mensagem else f"[Áudio enviado: {conteudo_extra}]"
 
     resultado = {}
     thread = threading.Thread(
@@ -322,13 +330,18 @@ def whatsapp():
     if "resposta" in resultado:
         resposta = resultado["resposta"]["messages"][-1].content
     elif "erro" in resultado:
-        resposta = "Desculpe, ocorreu um erro ao processar sua mensagem. Pode tentar novamente?"
+        resposta = "Desculpe, ocorreu um erro. Pode tentar novamente?"
     else:
-        resposta = "Desculpe, demorei demais para processar. Pode repetir?"
+        resposta = "Desculpe, demorei demais. Pode repetir?"
 
     resp = MessagingResponse()
 
-    if "AUDIO_GERADO:" in resposta:
+    if "IMAGEM_LOCAL:" in resposta:
+        caminho = resposta.split("IMAGEM_LOCAL:")[-1].strip()
+        url_b64 = upload_imagem_twilio(caminho)
+        msg = resp.message()
+        msg.media(url_b64)
+    elif "AUDIO_GERADO:" in resposta:
         caminho_audio = resposta.split("AUDIO_GERADO:")[-1].strip()
         with open(caminho_audio, "rb") as f:
             audio_b64 = base64.b64encode(f.read()).decode("utf-8")
