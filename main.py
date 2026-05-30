@@ -4,7 +4,7 @@ import base64
 import fitz
 import tempfile
 import threading
-import google.generativeai as genai
+from google import genai
 from flask import Flask, request
 from twilio.twiml.messaging_response import MessagingResponse
 from twilio.rest import Client
@@ -18,7 +18,7 @@ from langchain_core.tools import tool
 llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0)
 llm_vision = ChatGroq(model="meta-llama/llama-4-scout-17b-16e-instruct", temperature=0)
 twilio_client = Client(os.environ["TWILIO_ACCOUNT_SID"], os.environ["TWILIO_AUTH_TOKEN"])
-genai.configure(api_key=os.environ["GOOGLE_API_KEY"])
+genai_client = genai.Client(api_key=os.environ["GOOGLE_API_KEY"])
 
 # ── Tools ──────────────────────────────────────────────────
 
@@ -26,17 +26,15 @@ genai.configure(api_key=os.environ["GOOGLE_API_KEY"])
 def gerar_imagem(descricao: str) -> str:
     """Gera uma imagem de alta qualidade usando Google Imagen."""
     try:
-        imagen = genai.ImageGenerationModel("imagen-3.0-generate-002")
-        resultado = imagen.generate_images(
+        response = genai_client.models.generate_images(
+            model="imagen-3.0-generate-002",
             prompt=descricao,
-            number_of_images=1,
-            aspect_ratio="9:16",
+            config={"number_of_images": 1, "aspect_ratio": "9:16"}
         )
-        imagem = resultado.images[0]
+        imagem_bytes = response.generated_images[0].image.image_bytes
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
-            tmp.write(imagem._image_bytes)
-            tmp_path = tmp.name
-        return f"IMAGEM_LOCAL:{tmp_path}"
+            tmp.write(imagem_bytes)
+            return f"IMAGEM_LOCAL:{tmp.name}"
     except Exception as e:
         # Fallback pra Pollinations se der erro
         url = f"https://image.pollinations.ai/prompt/{requests.utils.quote(descricao)}?width=1080&height=1920&nologo=true"
@@ -288,12 +286,6 @@ def invocar_agente(messages, config, resultado):
     except Exception as e:
         resultado["erro"] = str(e)
 
-def upload_imagem_twilio(caminho: str) -> str:
-    """Sobe imagem local pro Twilio como base64 URL."""
-    with open(caminho, "rb") as f:
-        dados = base64.b64encode(f.read()).decode("utf-8")
-    return f"data:image/png;base64,{dados}"
-
 @app.route("/whatsapp", methods=["POST"])
 def whatsapp():
     numero = request.form.get("From")
@@ -338,9 +330,10 @@ def whatsapp():
 
     if "IMAGEM_LOCAL:" in resposta:
         caminho = resposta.split("IMAGEM_LOCAL:")[-1].strip()
-        url_b64 = upload_imagem_twilio(caminho)
+        with open(caminho, "rb") as f:
+            dados = base64.b64encode(f.read()).decode("utf-8")
         msg = resp.message()
-        msg.media(url_b64)
+        msg.media(f"data:image/png;base64,{dados}")
     elif "AUDIO_GERADO:" in resposta:
         caminho_audio = resposta.split("AUDIO_GERADO:")[-1].strip()
         with open(caminho_audio, "rb") as f:
