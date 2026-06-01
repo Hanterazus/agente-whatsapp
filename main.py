@@ -4,6 +4,8 @@ import base64
 import fitz
 import tempfile
 import threading
+import cloudinary
+import cloudinary.uploader
 from google import genai
 from flask import Flask, request
 from twilio.twiml.messaging_response import MessagingResponse
@@ -19,6 +21,11 @@ llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0)
 llm_vision = ChatGroq(model="meta-llama/llama-4-scout-17b-16e-instruct", temperature=0)
 twilio_client = Client(os.environ["TWILIO_ACCOUNT_SID"], os.environ["TWILIO_AUTH_TOKEN"])
 genai_client = genai.Client(api_key=os.environ["GOOGLE_API_KEY"])
+cloudinary.config(
+    cloud_name=os.environ["CLOUDINARY_CLOUD_NAME"],
+    api_key=os.environ["CLOUDINARY_API_KEY"],
+    api_secret=os.environ["CLOUDINARY_API_SECRET"]
+)
 
 # ── Tools ──────────────────────────────────────────────────
 
@@ -34,9 +41,10 @@ def gerar_imagem(descricao: str) -> str:
         imagem_bytes = response.generated_images[0].image.image_bytes
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
             tmp.write(imagem_bytes)
-            return f"IMAGEM_LOCAL:{tmp.name}"
+            tmp_path = tmp.name
+        upload = cloudinary.uploader.upload(tmp_path, folder="hanterazus")
+        return f"IMAGEM_GERADA:{upload['secure_url']}"
     except Exception as e:
-        # Fallback pra Pollinations se der erro
         url = f"https://image.pollinations.ai/prompt/{requests.utils.quote(descricao)}?width=1080&height=1920&nologo=true"
         requests.get(url, timeout=55)
         return f"IMAGEM_GERADA:{url}"
@@ -161,7 +169,13 @@ def texto_para_voz(texto: str) -> str:
         if resposta.status_code == 200:
             with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
                 tmp.write(resposta.content)
-                return f"AUDIO_GERADO:{tmp.name}"
+                tmp_path = tmp.name
+            upload = cloudinary.uploader.upload(
+                tmp_path,
+                resource_type="video",
+                folder="hanterazus"
+            )
+            return f"AUDIO_URL:{upload['secure_url']}"
         return "Não consegui gerar o áudio."
     except Exception as e:
         return f"Erro ao gerar voz: {str(e)}"
@@ -208,9 +222,7 @@ Você pode:
 - Fazer cálculos complexos usando a tool calcular_wolfram
 - Converter texto em voz usando a tool texto_para_voz
 
-Quando gerar uma imagem ou QR code via URL, responda APENAS: IMAGEM_GERADA:URL
-Quando gerar imagem local, responda APENAS: IMAGEM_LOCAL:caminho
-Quando gerar áudio, responda APENAS: AUDIO_GERADO:caminho
+Quando gerar imagem, QR code ou áudio, responda APENAS: IMAGEM_GERADA:URL ou AUDIO_URL:URL
 Nunca diga que vai gerar uma imagem sem realmente gerar. Sempre use a tool correta."""
 
 # ── Flask ──────────────────────────────────────────────────
@@ -328,18 +340,10 @@ def whatsapp():
 
     resp = MessagingResponse()
 
-    if "IMAGEM_LOCAL:" in resposta:
-        caminho = resposta.split("IMAGEM_LOCAL:")[-1].strip()
-        with open(caminho, "rb") as f:
-            dados = base64.b64encode(f.read()).decode("utf-8")
+    if "AUDIO_URL:" in resposta:
+        url_audio = resposta.split("AUDIO_URL:")[-1].strip()
         msg = resp.message()
-        msg.media(f"data:image/png;base64,{dados}")
-    elif "AUDIO_GERADO:" in resposta:
-        caminho_audio = resposta.split("AUDIO_GERADO:")[-1].strip()
-        with open(caminho_audio, "rb") as f:
-            audio_b64 = base64.b64encode(f.read()).decode("utf-8")
-        msg = resp.message()
-        msg.media(f"data:audio/mpeg;base64,{audio_b64}")
+        msg.media(url_audio)
     elif "IMAGEM_GERADA:" in resposta:
         url_imagem = resposta.split("IMAGEM_GERADA:")[-1].strip()
         msg = resp.message()
